@@ -1,5 +1,6 @@
 # Compare incoming video with known faces
 # Running in a local python instance to get around PATH issues
+# OPTIMIZED VERSION with daemon support and liveness detection
 
 # Import time so we can start timing asap
 import time
@@ -26,6 +27,19 @@ import paths_factory
 from recorders.video_capture import VideoCapture
 from i18n import _
 
+# Import optimization modules
+try:
+	from model_daemon import HowdyDaemonClient
+	DAEMON_AVAILABLE = True
+except ImportError:
+	DAEMON_AVAILABLE = False
+
+try:
+	from liveness_detection import create_liveness_detector
+	LIVENESS_AVAILABLE = True
+except ImportError:
+	LIVENESS_AVAILABLE = False
+
 def exit(code=None):
 	"""Exit while closing howdy-gtk properly"""
 	global gtk_proc
@@ -41,8 +55,23 @@ def exit(code=None):
 
 def init_detector(lock):
 	"""Start face detector, encoder and predictor in a new thread"""
-	global face_detector, pose_predictor, face_encoder
+	global face_detector, pose_predictor, face_encoder, daemon_client
 
+	# Try to use daemon first if available
+	if DAEMON_AVAILABLE and config.getboolean("daemon", "enabled", fallback=False):
+		try:
+			daemon_client = HowdyDaemonClient()
+			if daemon_client.is_daemon_running():
+				print(_("Using optimized daemon for face detection"))
+				timings["ll"] = 0.001  # Daemon is already loaded
+				lock.release()
+				return
+			else:
+				print(_("Daemon not available, falling back to direct loading"))
+		except Exception as e:
+			print(_("Daemon error: {}").format(str(e)))
+	
+	# Fallback to original loading
 	# Test if at lest 1 of the data files is there and abort if it's not
 	if not os.path.isfile(paths_factory.shape_predictor_5_face_landmarks_path()):
 		print(_("Data files have not been downloaded, please run the following commands:"))
@@ -121,6 +150,10 @@ face_detector = None
 pose_predictor = None
 face_encoder = None
 
+# Optimization instances
+daemon_client = None
+liveness_detector = None
+
 # Try to load the face model from the models folder
 try:
 	models = json.load(open(paths_factory.user_model_path(user)))
@@ -148,6 +181,15 @@ save_failed = config.getboolean("snapshots", "save_failed", fallback=False)
 save_successful = config.getboolean("snapshots", "save_successful", fallback=False)
 gtk_stdout = config.getboolean("debug", "gtk_stdout", fallback=False)
 rotate = config.getint("video", "rotate", fallback=0)
+
+# Optimization settings
+liveness_check = config.getboolean("security", "liveness_check", fallback=False)
+use_daemon = config.getboolean("daemon", "enabled", fallback=False)
+
+# Initialize liveness detector if enabled
+if LIVENESS_AVAILABLE and liveness_check:
+	liveness_detector = create_liveness_detector(config)
+	liveness_detector.reset()
 
 # Send the gtk output to the terminal if enabled in the config
 gtk_pipe = sys.stdout if gtk_stdout else subprocess.DEVNULL
@@ -298,16 +340,60 @@ while True:
 			gsframe = cv2.rotate(gsframe, cv2.ROTATE_90_CLOCKWISE)
 
 	# Get all faces from that frame as encodings
-	# Upsamples 1 time
-	face_locations = face_detector(gsframe, 1)
+	# Use daemon if available, otherwise fallback to direct detection
+	if daemon_client and DAEMON_AVAILABLE:
+		try:
+			face_locations = daemon_client.detect_faces(gsframe)
+		except Exception as e:
+			print(_("Daemon detection failed, using fallback: {}").format(str(e)))
+			face_locations = face_detector(gsframe, 1)
+	else:
+		# Upsamples 1 time
+		face_locations = face_detector(gsframe, 1)
+	
 	# Loop through each face
 	for fl in face_locations:
-		if use_cnn:
+		if use_cnn and not daemon_client:
 			fl = fl.rect
 
-		# Fetch the faces in the image
-		face_landmark = pose_predictor(frame, fl)
-		face_encoding = np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1))
+		# Get face encoding using daemon or direct computation
+		if daemon_client and DAEMON_AVAILABLE:
+			try:
+				face_encoding = daemon_client.get_face_encoding(frame, fl)
+				if face_encoding is None:
+					continue
+				face_encoding = np.array(face_encoding)
+				
+				# Get landmarks for liveness detection if needed
+				if liveness_detector:
+					# Request landmarks from daemon
+					face_landmark = daemon_client.send_request({
+						'type': 'get_face_landmarks',
+						'frame': frame,
+						'face_location': fl
+					})
+			except Exception as e:
+				print(_("Daemon encoding failed, using fallback: {}").format(str(e)))
+				face_landmark = pose_predictor(frame, fl)
+				face_encoding = np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1))
+		else:
+			# Fallback to direct computation
+			face_landmark = pose_predictor(frame, fl)
+			face_encoding = np.array(face_encoder.compute_face_descriptor(frame, face_landmark, 1))
+
+		# Liveness detection if enabled
+		if liveness_detector and face_landmark:
+			# Convert face location to region format for liveness detection
+			face_region = (fl.left(), fl.top(), fl.width(), fl.height())
+			
+			# Check if face is live
+			is_live = liveness_detector.process_frame(frame, face_landmark, face_region)
+			
+			if not is_live:
+				# Update UI with liveness feedback
+				feedback = liveness_detector.get_user_feedback()
+				send_to_ui("M", feedback)
+				continue
 
 		# Match this found face against a known face
 		matches = np.linalg.norm(encodings - face_encoding, axis=1)

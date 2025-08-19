@@ -1,0 +1,73 @@
+# Howdy Optimized - Git ignore file
+
+# Build directories
+build/
+build_*/
+test_env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Meson
+.mesonpy-*
+subprojects/*/
+
+# Package files
+*.pkg.tar.*
+*.deb
+*.rpm
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.temp/
+tmp/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Configuration backups
+config_*.ini
+*.ini.bak
+
+# Test results
+benchmark_*.json
+test_results/
+
+# Cache
+.cache/
+*.cache
+
+# Documentation build
+docs/_build/
+
+# Coverage reports
+htmlcov/
+.coverage
+.pytest_cache/
