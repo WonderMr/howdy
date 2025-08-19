@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Howdy Model Daemon - Предзагрузка и кэширование dlib моделей для ускорения аутентификации
+Howdy Model Daemon - Preloading and caching dlib models for faster authentication
 """
 
 import os
@@ -22,7 +22,7 @@ import lockfile
 
 
 class HowdyModelDaemon:
-    """Daemon для предзагрузки и кэширования моделей распознавания лиц"""
+    """Daemon for preloading and caching face recognition models"""
     
     def __init__(self, config_path=None):
         self.config = configparser.ConfigParser()
@@ -31,27 +31,27 @@ class HowdyModelDaemon:
         else:
             self.config.read(paths_factory.config_file_path())
             
-        # Кэш для загруженных моделей
+        # Cache for loaded models
         self.models_cache = {}
         self.encodings_cache = {}
         
-        # dlib компоненты
+        # dlib components
         self.face_detector = None
         self.pose_predictor = None
         self.face_encoder = None
         
-        # Флаги состояния
+        # Status flags
         self.models_loaded = False
         self.use_cnn = self.config.getboolean("core", "use_cnn", fallback=False)
         
-        # Сокет для IPC
+        # IPC socket
         self.socket_path = "/tmp/howdy_daemon.sock"
         self.server_socket = None
         
-        # Блокировка для потокобезопасности
+        # Thread safety lock
         self.lock = threading.RLock()
         
-        # Статистика
+        # Statistics
         self.stats = {
             'requests_served': 0,
             'cache_hits': 0,
