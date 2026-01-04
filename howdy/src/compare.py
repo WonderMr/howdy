@@ -188,8 +188,12 @@ use_daemon = config.getboolean("daemon", "enabled", fallback=False)
 
 # Initialize liveness detector if enabled
 if LIVENESS_AVAILABLE and liveness_check:
-	liveness_detector = create_liveness_detector(config)
-	liveness_detector.reset()
+	try:
+		liveness_detector = create_liveness_detector(config)
+		liveness_detector.reset()
+	except Exception as e:
+		print(_("Failed to initialize liveness detector: {}").format(str(e)))
+		liveness_detector = None
 
 # Send the gtk output to the terminal if enabled in the config
 gtk_pipe = sys.stdout if gtk_stdout else subprocess.DEVNULL
@@ -384,15 +388,21 @@ while True:
 		# Liveness detection if enabled
 		if liveness_detector and face_landmark:
 			# Convert face location to region format for liveness detection
-			face_region = (fl.left(), fl.top(), fl.width(), fl.height())
+			if hasattr(fl, 'left'):
+				face_region = (fl.left(), fl.top(), fl.width(), fl.height())
+			else:
+				face_region = fl # Assuming rect or tuple
 			
 			# Check if face is live
+			# process_frame handles both passive analysis and active challenges
 			is_live = liveness_detector.process_frame(frame, face_landmark, face_region)
 			
+			# Update UI with liveness feedback (active challenge instructions)
+			feedback = liveness_detector.get_user_feedback()
+			send_to_ui("M", feedback)
+			
 			if not is_live:
-				# Update UI with liveness feedback
-				feedback = liveness_detector.get_user_feedback()
-				send_to_ui("M", feedback)
+				# Don't proceed to matching if liveness check hasn't passed
 				continue
 
 		# Match this found face against a known face

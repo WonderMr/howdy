@@ -17,8 +17,13 @@ import socket
 import pickle
 import struct
 import signal
-import daemon
-import lockfile
+
+try:
+    import daemon
+    import lockfile
+    DAEMON_MODULES_AVAILABLE = True
+except ImportError:
+    DAEMON_MODULES_AVAILABLE = False
 
 
 class HowdyModelDaemon:
@@ -369,7 +374,8 @@ class HowdyDaemonClient:
             return response
             
         except Exception as e:
-            print(_("Error communicating with daemon: {}").format(str(e)))
+            # print(_("Error communicating with daemon: {}").format(str(e)))
+            # Silent fail for client is better
             return None
     
     def recvall(self, sock, n):
@@ -446,6 +452,10 @@ def main():
     daemon_instance = HowdyModelDaemon(args.config)
     
     if args.daemon:
+        if not DAEMON_MODULES_AVAILABLE:
+            print(_("Error: python-daemon and lockfile modules are required for daemon mode"))
+            sys.exit(1)
+            
         # Запуск в фоновом режиме
         with daemon.DaemonContext(
             pidfile=lockfile.FileLock('/tmp/howdy_daemon.pid'),

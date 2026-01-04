@@ -2,6 +2,9 @@
 
 An optimized version of Howdy with significant performance improvements and enhanced security features.
 
+> **Original Project**: [boltgolt/howdy](https://github.com/boltgolt/howdy) - Windows Hello™ style authentication for Linux  
+> **This Fork**: [WonderMr/howdy](https://github.com/WonderMr/howdy) - Enhanced with performance and security improvements
+
 ## 🎯 Key Improvements
 
 ### ⚡ Performance Enhancements
@@ -69,17 +72,17 @@ make install-package  # Build and install
 
 ## ⚙️ Configuration
 
-### Enable Optimizations
-Edit `/etc/howdy/config.ini`:
+### Security & Performance
+For detailed security configuration and anti-spoofing features, see **[SECURITY_SETTINGS.md](SECURITY_SETTINGS.md)**
+
+Quick setup:
 ```ini
 [daemon]
 enabled = true
 
 [security]
 liveness_check = true
-
-[performance]
-parallel_processing = true
+security_level = high
 ```
 
 ### Management Commands
@@ -88,6 +91,11 @@ sudo howdy-daemon-start     # Start daemon
 sudo howdy-daemon-status    # Show status
 sudo systemctl enable howdy-daemon.service  # Auto-start
 ```
+
+### Additional Resources
+- **[Security Configuration](SECURITY_SETTINGS.md#current-setup)** - Anti-spoofing features
+- **[Troubleshooting](SECURITY_SETTINGS.md#troubleshooting)** - Common issues
+- **[Performance Tuning](SECURITY_SETTINGS.md#performance-impact)** - Daemon vs standard mode
 
 ## 🧪 Testing Features
 
@@ -139,6 +147,12 @@ make clean             # Clean temporary files
 ## 📄 License
 
 MIT License (same as original Howdy)
+
+## 🔗 Links
+
+- **Original Project**: https://github.com/boltgolt/howdy
+- **This Fork**: https://github.com/WonderMr/howdy
+- **Issues & PRs**: https://github.com/WonderMr/howdy/issues
 
 ---
 

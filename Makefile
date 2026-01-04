@@ -1,181 +1,174 @@
 # Makefile for Howdy Optimized
-# Удобные команды для сборки, тестирования и управления
+# Convenient commands for building, testing, and managing
 
 .PHONY: help build test clean install uninstall package test-local demo benchmark deps check
 
-# Цвета для вывода
+# Colors for output
 BLUE = \033[0;34m
 GREEN = \033[0;32m
 YELLOW = \033[1;33m
 RED = \033[0;31m
 NC = \033[0m # No Color
 
-# Переменные
+# Variables
 BUILDDIR = build
 TESTDIR = test_env
 PKGNAME = howdy-optimized-git
 
-help: ## Показать справку
-	@echo "$(BLUE)🚀 Howdy Optimized - Makefile команды$(NC)"
+help: ## Show help
+	@echo "$(BLUE)🚀 Howdy Optimized - Makefile commands$(NC)"
 	@echo "=================================="
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "$(GREEN)%-15s$(NC) %s\n", $$1, $$2}'
 	@echo ""
-	@echo "$(YELLOW)Примеры использования:$(NC)"
-	@echo "  make deps          # Установить зависимости"
-	@echo "  make test-local    # Локальное тестирование"
-	@echo "  make package       # Собрать Arch пакет"
-	@echo "  make demo          # Запустить демонстрацию"
+	@echo "$(YELLOW)Usage examples:$(NC)"
+	@echo "  make deps          # Install dependencies"
+	@echo "  make test-local    # Local testing"
+	@echo "  make package       # Build Arch package"
 
-deps: ## Установить зависимости для Arch Linux
-	@echo "$(BLUE)📦 Установка зависимостей...$(NC)"
+deps: ## Install dependencies for Arch Linux
+	@echo "$(BLUE)📦 Installing dependencies...$(NC)"
 	sudo pacman -S --needed \
 		python python-numpy python-opencv python-dlib \
 		python-pillow python-daemon python-lockfile python-psutil \
 		meson ninja cmake pkgconf git base-devel
-	@echo "$(GREEN)✅ Зависимости установлены$(NC)"
+	@echo "$(GREEN)✅ Dependencies installed$(NC)"
 
-check: ## Проверить зависимости и синтаксис
-	@echo "$(BLUE)🔍 Проверка зависимостей и синтаксиса...$(NC)"
-	@python3 -c "import cv2, numpy, dlib, daemon, lockfile, psutil; print('✅ Python зависимости в порядке')"
-	@command -v meson >/dev/null 2>&1 && echo "✅ meson найден" || (echo "❌ meson не найден" && exit 1)
-	@command -v ninja >/dev/null 2>&1 && echo "✅ ninja найден" || (echo "❌ ninja не найден" && exit 1)
-	@python3 -m py_compile howdy/src/*.py && echo "✅ Синтаксис Python файлов корректен"
-	@echo "$(GREEN)✅ Все проверки пройдены$(NC)"
+check: ## Check dependencies and syntax
+	@echo "$(BLUE)🔍 Checking dependencies and syntax...$(NC)"
+	@python3 -c "import cv2, numpy, dlib, daemon, lockfile, psutil; print('✅ Python dependencies OK')"
+	@command -v meson >/dev/null 2>&1 && echo "✅ meson found" || (echo "❌ meson not found" && exit 1)
+	@command -v ninja >/dev/null 2>&1 && echo "✅ ninja found" || (echo "❌ ninja not found" && exit 1)
+	@python3 -m py_compile howdy/src/*.py && echo "✅ Python file syntax correct"
+	@echo "$(GREEN)✅ All checks passed$(NC)"
 
-build: ## Собрать проект с meson
-	@echo "$(BLUE)🔨 Сборка проекта...$(NC)"
+build: ## Build project with meson
+	@echo "$(BLUE)🔨 Building project...$(NC)"
 	meson setup $(BUILDDIR) --buildtype=release
 	meson compile -C $(BUILDDIR)
-	@echo "$(GREEN)✅ Проект собран$(NC)"
+	@echo "$(GREEN)✅ Project built$(NC)"
 
-test-local: ## Запустить локальное тестирование без установки
-	@echo "$(BLUE)🧪 Локальное тестирование...$(NC)"
+test-local: ## Run local testing without installation
+	@echo "$(BLUE)🧪 Local testing...$(NC)"
 	@if [ "$$EUID" -ne 0 ]; then \
-		echo "$(YELLOW)⚠️  Требуются права root для полного тестирования$(NC)"; \
-		echo "Запустите: sudo make test-local"; \
+		echo "$(YELLOW)⚠️  Root privileges required for full testing$(NC)"; \
+		echo "Run: sudo make test-local"; \
 		exit 1; \
 	fi
 	chmod +x test_local.sh
 	./test_local.sh
 
-test: test-local ## Алиас для test-local
+test: test-local ## Alias for test-local
 
-package: clean ## Собрать Arch Linux пакет
-	@echo "$(BLUE)📦 Сборка Arch пакета...$(NC)"
+package: clean ## Build Arch Linux package
+	@echo "$(BLUE)📦 Building Arch package...$(NC)"
 	@if [ ! -f PKGBUILD ]; then \
-		echo "$(RED)❌ PKGBUILD не найден$(NC)"; \
+		echo "$(RED)❌ PKGBUILD not found$(NC)"; \
 		exit 1; \
 	fi
 	makepkg -sf
-	@echo "$(GREEN)✅ Пакет собран$(NC)"
-	@ls -la *.pkg.tar.* 2>/dev/null || echo "$(YELLOW)⚠️  Файлы пакета не найдены$(NC)"
+	@echo "$(GREEN)✅ Package built$(NC)"
+	@ls -la *.pkg.tar.* 2>/dev/null || echo "$(YELLOW)⚠️  Package files not found$(NC)"
 
-install-package: package ## Собрать и установить пакет
-	@echo "$(BLUE)📥 Установка пакета...$(NC)"
+install-package: package ## Build and install package
+	@echo "$(BLUE)📥 Installing package...$(NC)"
 	makepkg -si
-	@echo "$(GREEN)✅ Пакет установлен$(NC)"
+	@echo "$(GREEN)✅ Package installed$(NC)"
 
-demo: ## Запустить интерактивную демонстрацию
-	@echo "$(BLUE)🎭 Запуск демонстрации...$(NC)"
-	python3 demo_improvements.py
+demo: ## Run interactive demonstration
+	@echo "$(BLUE)🎭 Starting demo...$(NC)"
+	@echo "$(YELLOW)Demo script removed. Use 'howdy test' instead.$(NC)"
 
-benchmark: ## Запустить бенчмарк производительности
-	@echo "$(BLUE)📊 Запуск бенчмарка...$(NC)"
-	@if [ -z "$(USER_NAME)" ]; then \
-		echo "$(YELLOW)Использование: make benchmark USER_NAME=username$(NC)"; \
-		echo "Или запустите: python3 performance_benchmark.py --user username"; \
-	else \
-		python3 performance_benchmark.py --user $(USER_NAME); \
-	fi
+benchmark: ## Run performance benchmark
+	@echo "$(BLUE)📊 Running benchmark...$(NC)"
+	@echo "$(YELLOW)Benchmark script removed. Use 'howdy test' with end_report=true instead.$(NC)"
 
-clean: ## Очистить временные файлы
-	@echo "$(BLUE)🧹 Очистка...$(NC)"
+clean: ## Clean temporary files
+	@echo "$(BLUE)🧹 Cleaning...$(NC)"
 	rm -rf $(BUILDDIR) $(TESTDIR)
 	rm -f *.pkg.tar.*
 	rm -f *.log
 	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 	find . -name "*.pyc" -delete 2>/dev/null || true
-	@echo "$(GREEN)✅ Очистка завершена$(NC)"
+	@echo "$(GREEN)✅ Cleanup complete$(NC)"
 
-# Команды для разработки
-dev-setup: deps ## Настроить среду разработки
-	@echo "$(BLUE)🛠️  Настройка среды разработки...$(NC)"
+# Development commands
+dev-setup: deps ## Setup development environment
+	@echo "$(BLUE)🛠️  Setting up development environment...$(NC)"
 	pip3 install --user pytest black flake8 mypy
-	@echo "$(GREEN)✅ Среда разработки настроена$(NC)"
+	@echo "$(GREEN)✅ Development environment ready$(NC)"
 
-lint: ## Проверить код с помощью flake8
-	@echo "$(BLUE)🔍 Проверка кода...$(NC)"
+lint: ## Check code with flake8
+	@echo "$(BLUE)🔍 Checking code...$(NC)"
 	flake8 howdy/src/*.py --max-line-length=120 --ignore=E501,W503
-	@echo "$(GREEN)✅ Проверка кода завершена$(NC)"
+	@echo "$(GREEN)✅ Code check complete$(NC)"
 
-format: ## Форматировать код с помощью black
-	@echo "$(BLUE)✨ Форматирование кода...$(NC)"
+format: ## Format code with black
+	@echo "$(BLUE)✨ Formatting code...$(NC)"
 	black howdy/src/*.py --line-length=120
-	@echo "$(GREEN)✅ Код отформатирован$(NC)"
+	@echo "$(GREEN)✅ Code formatted$(NC)"
 
-# Команды для управления установленной версией
-daemon-start: ## Запустить Howdy daemon (требует установки)
-	@echo "$(BLUE)🚀 Запуск Howdy daemon...$(NC)"
+# Commands for managing installed version
+daemon-start: ## Start Howdy daemon (requires installation)
+	@echo "$(BLUE)🚀 Starting Howdy daemon...$(NC)"
 	sudo howdy-daemon-start
 
-daemon-stop: ## Остановить Howdy daemon
-	@echo "$(BLUE)🛑 Остановка Howdy daemon...$(NC)"
+daemon-stop: ## Stop Howdy daemon
+	@echo "$(BLUE)🛑 Stopping Howdy daemon...$(NC)"
 	sudo howdy-daemon-stop
 
-daemon-status: ## Показать статус daemon
-	@echo "$(BLUE)📊 Статус Howdy daemon...$(NC)"
+daemon-status: ## Show daemon status
+	@echo "$(BLUE)📊 Howdy daemon status:$(NC)"
 	sudo howdy-daemon-status
 
-daemon-restart: ## Перезапустить daemon
-	@echo "$(BLUE)🔄 Перезапуск Howdy daemon...$(NC)"
+daemon-restart: ## Restart daemon
+	@echo "$(BLUE)🔄 Restarting Howdy daemon...$(NC)"
 	sudo howdy-daemon-restart
 
-# Команды для отладки
-debug-build: ## Сборка в режиме отладки
-	@echo "$(BLUE)🐛 Отладочная сборка...$(NC)"
+# Debug commands
+debug-build: ## Build in debug mode
+	@echo "$(BLUE)🐛 Debug build...$(NC)"
 	meson setup $(BUILDDIR)_debug --buildtype=debug
 	meson compile -C $(BUILDDIR)_debug
-	@echo "$(GREEN)✅ Отладочная сборка завершена$(NC)"
+	@echo "$(GREEN)✅ Debug build complete$(NC)"
 
-debug-test: ## Запуск тестов с отладочной информацией
-	@echo "$(BLUE)🐛 Отладочное тестирование...$(NC)"
+debug-test: ## Run tests with debug information
+	@echo "$(BLUE)🐛 Debug testing...$(NC)"
 	DEBUG=1 ./test_local.sh
 
-# Информационные команды
-info: ## Показать информацию о системе
-	@echo "$(BLUE)ℹ️  Системная информация:$(NC)"
+# Information commands
+info: ## Show system information
+	@echo "$(BLUE)ℹ️  System information:$(NC)"
 	@echo "OS: $$(uname -a)"
 	@echo "Python: $$(python3 --version)"
-	@echo "OpenCV: $$(python3 -c 'import cv2; print(cv2.__version__)' 2>/dev/null || echo 'не установлен')"
-	@echo "dlib: $$(python3 -c 'import dlib; print(dlib.DLIB_VERSION)' 2>/dev/null || echo 'не установлен')"
-	@echo "NumPy: $$(python3 -c 'import numpy; print(numpy.__version__)' 2>/dev/null || echo 'не установлен')"
-	@echo "Meson: $$(meson --version 2>/dev/null || echo 'не установлен')"
+	@echo "OpenCV: $$(python3 -c 'import cv2; print(cv2.__version__)' 2>/dev/null || echo 'not installed')"
+	@echo "dlib: $$(python3 -c 'import dlib; print(dlib.DLIB_VERSION)' 2>/dev/null || echo 'not installed')"
+	@echo "NumPy: $$(python3 -c 'import numpy; print(numpy.__version__)' 2>/dev/null || echo 'not installed')"
+	@echo "Meson: $$(meson --version 2>/dev/null || echo 'not installed')"
 
-version: ## Показать версию проекта
-	@echo "$(BLUE)📋 Версия Howdy Optimized:$(NC)"
+version: ## Show project version
+	@echo "$(BLUE)📋 Howdy Optimized version:$(NC)"
 	@git describe --tags --always --dirty 2>/dev/null || echo "unknown"
 	@echo "Commit: $$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
 	@echo "Branch: $$(git branch --show-current 2>/dev/null || echo 'unknown')"
 
-# Команды для документации
-docs: ## Показать ссылки на документацию
-	@echo "$(BLUE)📚 Документация:$(NC)"
-	@echo "• README: OPTIMIZATION_README.md"
-	@echo "• План оптимизации: OPTIMIZATION_PLAN.md"
-	@echo "• Сводка: SUMMARY.md"
+# Documentation commands
+docs: ## Show documentation links
+	@echo "$(BLUE)📚 Documentation:$(NC)"
+	@echo "• README: README.md"
+	@echo "• Security Settings: SECURITY_SETTINGS.md"
 	@echo ""
-	@echo "$(BLUE)🎮 Быстрый старт:$(NC)"
-	@echo "1. make deps           # Установить зависимости"
-	@echo "2. make check          # Проверить систему"
-	@echo "3. make test-local     # Протестировать локально"
-	@echo "4. make package        # Собрать пакет"
-	@echo "5. make install-package # Установить пакет"
+	@echo "$(BLUE)🎮 Quick start:$(NC)"
+	@echo "1. make deps           # Install dependencies"
+	@echo "2. make check          # Check system"
+	@echo "3. make test-local     # Test locally"
+	@echo "4. make package        # Build package"
+	@echo "5. make install-package # Install package"
 
-# Команды для CI/CD
-ci-test: check test-local ## Полное тестирование для CI
-	@echo "$(GREEN)✅ CI тестирование завершено$(NC)"
+# CI/CD commands
+ci-test: check test-local ## Full testing for CI
+	@echo "$(GREEN)✅ CI testing complete$(NC)"
 
-# Показать справку по умолчанию
+# Show help by default
 all: help
