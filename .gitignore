@@ -128,3 +128,7 @@ debian/howdy
 
 # Meson
 subprojects/
+.cursor/
+mcp.json
+scripts/init_repo.sh
+src/
