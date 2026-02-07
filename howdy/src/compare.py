@@ -2,8 +2,13 @@
 # Running in a local python instance to get around PATH issues
 # OPTIMIZED VERSION with daemon support and liveness detection
 
+# Disable bytecode caching to ensure fresh code is always used
+import sys
+sys.dont_write_bytecode = True
+
 # Import time so we can start timing asap
 import time
+import logging
 
 # Start timing
 timings = {
@@ -58,40 +63,47 @@ def init_detector(lock):
 	global face_detector, pose_predictor, face_encoder, daemon_client
 
 	# Try to use daemon first if available
+	daemon_is_running = False
 	if DAEMON_AVAILABLE and config.getboolean("daemon", "enabled", fallback=False):
 		try:
 			daemon_client = HowdyDaemonClient()
 			if daemon_client.is_daemon_running():
 				print(_("Using optimized daemon for face detection"))
+				logging.info("Daemon is running, using daemon for face detection")
 				timings["ll"] = 0.001  # Daemon is already loaded
-				lock.release()
-				return
+				daemon_is_running = True
 			else:
 				print(_("Daemon not available, falling back to direct loading"))
+				logging.info("Daemon not running, setting daemon_client = None")
+				daemon_client = None  # CRITICAL: Set to None so fallback detection is used!
 		except Exception as e:
 			print(_("Daemon error: {}").format(str(e)))
+			logging.error(f"Daemon error: {e}")
+			daemon_client = None  # CRITICAL: Set to None on error!
 	
-	# Fallback to original loading
+	# Always load fallback models (needed if daemon fails during detection)
 	# Test if at lest 1 of the data files is there and abort if it's not
-	if not os.path.isfile(paths_factory.shape_predictor_5_face_landmarks_path()):
-		print(_("Data files have not been downloaded, please run the following commands:"))
-		print("\n\tcd " + paths_factory.dlib_data_dir_path())
-		print("\tsudo ./install.sh\n")
-		lock.release()
-		exit(1)
+	if not daemon_is_running:
+		if not os.path.isfile(paths_factory.shape_predictor_5_face_landmarks_path()):
+			print(_("Data files have not been downloaded, please run the following commands:"))
+			print("\n\tcd " + paths_factory.dlib_data_dir_path())
+			print("\tsudo ./install.sh\n")
+			lock.release()
+			exit(1)
 
-	# Use the CNN detector if enabled
-	if use_cnn:
-		face_detector = dlib.cnn_face_detection_model_v1(paths_factory.mmod_human_face_detector_path())
-	else:
-		face_detector = dlib.get_frontal_face_detector()
+		# Use the CNN detector if enabled
+		if use_cnn:
+			face_detector = dlib.cnn_face_detection_model_v1(paths_factory.mmod_human_face_detector_path())
+		else:
+			face_detector = dlib.get_frontal_face_detector()
 
-	# Start the others regardless
-	pose_predictor = dlib.shape_predictor(paths_factory.shape_predictor_5_face_landmarks_path())
-	face_encoder = dlib.face_recognition_model_v1(paths_factory.dlib_face_recognition_resnet_model_v1_path())
+		# Start the others regardless
+		pose_predictor = dlib.shape_predictor(paths_factory.shape_predictor_5_face_landmarks_path())
+		face_encoder = dlib.face_recognition_model_v1(paths_factory.dlib_face_recognition_resnet_model_v1_path())
 
-	# Note the time it took to initialize detectors
-	timings["ll"] = time.time() - timings["ll"]
+		# Note the time it took to initialize detectors
+		timings["ll"] = time.time() - timings["ll"]
+	
 	lock.release()
 
 
@@ -171,6 +183,22 @@ if len(models) < 1:
 config = configparser.ConfigParser()
 config.read(paths_factory.config_file_path())
 
+# Setup logging only if debug_log is enabled
+debug_log = config.getboolean("debug", "debug_log", fallback=False)
+if debug_log:
+	# force=True needed because basicConfig is ignored if root logger already configured
+	logging.basicConfig(
+		filename='/tmp/howdy_debug.log',
+		level=logging.DEBUG,
+		format='%(asctime)s %(levelname)s: %(message)s',
+		force=True
+	)
+	logging.info("------------------------------------------------")
+	logging.info(f"Howdy compare started. User: {user}")
+else:
+	# Disable logging completely
+	logging.disable(logging.CRITICAL)
+
 # Get all config values needed
 use_cnn = config.getboolean("core", "use_cnn", fallback=False)
 timeout = config.getint("video", "timeout", fallback=4)
@@ -186,13 +214,17 @@ rotate = config.getint("video", "rotate", fallback=0)
 liveness_check = config.getboolean("security", "liveness_check", fallback=False)
 use_daemon = config.getboolean("daemon", "enabled", fallback=False)
 
+logging.info(f"Config: liveness={liveness_check}, daemon={use_daemon}, timeout={timeout}")
+
 # Initialize liveness detector if enabled
 if LIVENESS_AVAILABLE and liveness_check:
 	try:
 		liveness_detector = create_liveness_detector(config)
 		liveness_detector.reset()
+		logging.info("Liveness detector initialized")
 	except Exception as e:
 		print(_("Failed to initialize liveness detector: {}").format(str(e)))
+		logging.error(f"Failed to initialize liveness detector: {e}")
 		liveness_detector = None
 
 # Send the gtk output to the terminal if enabled in the config
@@ -262,9 +294,12 @@ valid_frames = 0
 timings["fr"] = time.time()
 dark_running_total = 0
 
+logging.info("Entering main loop")
+
 while True:
 	# Increment the frame count every loop
 	frames += 1
+	frame_start = time.time()
 
 	# Form a string to let the user know we're real busy
 	ui_subtext = "Scanned " + str(valid_frames - dark_tries) + " frames"
@@ -275,6 +310,7 @@ while True:
 
 	# Stop if we've exceeded the time limit
 	if time.time() - timings["fr"] > timeout:
+		logging.warning("Timeout reached")
 		# Create a timeout snapshot if enabled
 		if save_failed:
 			make_snapshot(_("FAILED"))
@@ -287,8 +323,17 @@ while True:
 			exit(11)
 
 	# Grab a single frame of video
+	t_read = time.time()
 	frame, gsframe = video_capture.read_frame()
+	read_time = (time.time() - t_read) * 1000
+	
+	t_clahe = time.time()
 	gsframe = clahe.apply(gsframe)
+	clahe_time = (time.time() - t_clahe) * 1000
+	
+	# Log timing every frame for first 10, then every 10th
+	if frames <= 10 or frames % 10 == 0:
+		logging.info(f"Frame {frames}: read={read_time:.0f}ms, clahe={clahe_time:.0f}ms")
 
 	# If snapshots have been turned on
 	if save_failed or save_successful:
@@ -302,7 +347,10 @@ while True:
 	hist_total = np.sum(hist)
 
 	# Calculate frame darkness
-	darkness = (hist[0] / hist_total * 100)
+	darkness = (hist[0] / hist_total * 100).item()
+	
+	if frames % 10 == 0:
+		logging.debug(f"Frame {frames}: darkness={darkness:.1f}")
 
 	# If the image is fully black due to a bad camera read,
 	# skip to the next frame
@@ -345,16 +393,31 @@ while True:
 
 	# Get all faces from that frame as encodings
 	# Use daemon if available, otherwise fallback to direct detection
+	t_detect = time.time()
 	if daemon_client and DAEMON_AVAILABLE:
 		try:
 			face_locations = daemon_client.detect_faces(gsframe)
+			# CRITICAL: daemon returns None on failure (silent fail), use fallback
+			if face_locations is None:
+				logging.warning("Daemon returned None, using fallback detector")
+				face_locations = face_detector(gsframe, 0)  # 0 = no upsample, faster
 		except Exception as e:
 			print(_("Daemon detection failed, using fallback: {}").format(str(e)))
+			logging.error(f"Daemon detection exception: {e}")
 			face_locations = face_detector(gsframe, 1)
 	else:
-		# Upsamples 1 time
-		face_locations = face_detector(gsframe, 1)
+		# No upsample (0) for faster detection at 320px resolution
+		face_locations = face_detector(gsframe, 0)
+	detect_time = (time.time() - t_detect) * 1000
 	
+	# Handle None result (camera/detection issues)
+	if face_locations is None:
+		face_locations = []
+	
+	# Log detection time
+	if frames <= 10 or frames % 10 == 0 or len(face_locations) > 0:
+		logging.info(f"Frame {frames}: detect={detect_time:.0f}ms, faces={len(face_locations)}")
+
 	# Loop through each face
 	for fl in face_locations:
 		if use_cnn and not daemon_client:
@@ -399,6 +462,9 @@ while True:
 			
 			# Update UI with liveness feedback (active challenge instructions)
 			feedback = liveness_detector.get_user_feedback()
+			
+			logging.info(f"Liveness: {feedback} (live={is_live})")
+			
 			send_to_ui("M", feedback)
 			
 			if not is_live:
@@ -450,6 +516,8 @@ while True:
 				print(_("Certainty of winning frame: %.3f") % (match * 10, ))
 
 				print(_("Winning model: %d (\"%s\")") % (match_index, models[match_index]["label"]))
+			
+			logging.info(f"Match found: {match} < {video_certainty}")
 
 			# Make snapshot if enabled
 			if save_successful:

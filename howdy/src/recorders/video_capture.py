@@ -48,9 +48,6 @@ class VideoCapture:
 		self.fh = None
 		self._create_reader()
 
-		# Request a frame to wake the camera up
-		self.internal.grab()
-
 	def __del__(self):
 		"""
 		Frees resources when destroyed

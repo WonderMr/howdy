@@ -1,0 +1,5 @@
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.policykit.pkexec.run-howdy-pam-toggle") {
+        return polkit.Result.AUTH_ADMIN;
+    }
+});

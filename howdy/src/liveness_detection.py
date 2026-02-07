@@ -22,7 +22,8 @@ except ImportError:
 class ActiveChallengeSystem:
     """Manages active challenges for the user (blink, turn head, etc)"""
     
-    CHALLENGE_TYPES = ['blink', 'turn_left', 'turn_right', 'nod']
+    # Disable blink for 5-point landmark model (doesn't have eye contours)
+    CHALLENGE_TYPES = ['turn_left', 'turn_right', 'nod']
     
     def __init__(self, config=None):
         self.config = config
@@ -134,63 +135,131 @@ class AdvancedLivenessDetector:
         return (A + B) / (2.0 * C)
 
     def _check_blink(self, landmarks):
-        """Detect blink from landmarks"""
-        left_eye = [(landmarks.part(i).x, landmarks.part(i).y) for i in range(36, 42)]
-        right_eye = [(landmarks.part(i).x, landmarks.part(i).y) for i in range(42, 48)]
-        
-        left_ear = self._get_ear(left_eye)
-        right_ear = self._get_ear(right_eye)
-        avg_ear = (left_ear + right_ear) / 2.0
-        
-        self.eye_ar_history.append(avg_ear)
-        
-        # Simple blink logic: transition from open -> closed -> open
-        if len(self.eye_ar_history) >= 3:
-            # If current is closed but recent history was open
-            if avg_ear < self.eye_ar_threshold:
-                # Check if we were open recently
-                if max(list(self.eye_ar_history)[-5:]) > 0.3:
-                    return True
-        return False
+        """Detect blink from landmarks (works with 5-point model)"""
+        # For 5-point model: points 0-1 are left eye, 2-3 are right eye
+        # We approximate EAR using eye corner distances
+        try:
+            # Check if this is 5-point model (has only 5 landmarks)
+            num_parts = landmarks.num_parts
+            
+            if num_parts == 5:
+                # 5-point model: simplified blink detection
+                # Points: 0=left_eye_left, 1=left_eye_right, 2=right_eye_left, 3=right_eye_right, 4=nose
+                left_eye = [(landmarks.part(0).x, landmarks.part(0).y), (landmarks.part(1).x, landmarks.part(1).y)]
+                right_eye = [(landmarks.part(2).x, landmarks.part(2).y), (landmarks.part(3).x, landmarks.part(3).y)]
+                
+                # Distance between eye corners (smaller = possibly closed)
+                left_dist = np.linalg.norm(np.array(left_eye[0]) - np.array(left_eye[1]))
+                right_dist = np.linalg.norm(np.array(right_eye[0]) - np.array(right_eye[1]))
+                avg_dist = (left_dist + right_dist) / 2.0
+                
+                self.eye_ar_history.append(avg_dist)
+                
+                # Blink logic: look for dip in distance (eyes closing)
+                if len(self.eye_ar_history) >= 5:
+                    recent_vals = list(self.eye_ar_history)[-5:]
+                    max_val = max(recent_vals)
+                    min_val = min(recent_vals)
+                    # If there's significant variance (blink), and we're recovering
+                    if max_val - min_val > 5 and avg_dist > (max_val * 0.8):
+                        return True
+                return False
+            else:
+                # 68-point model: original logic
+                left_eye = [(landmarks.part(i).x, landmarks.part(i).y) for i in range(36, 42)]
+                right_eye = [(landmarks.part(i).x, landmarks.part(i).y) for i in range(42, 48)]
+                
+                left_ear = self._get_ear(left_eye)
+                right_ear = self._get_ear(right_eye)
+                avg_ear = (left_ear + right_ear) / 2.0
+                
+                self.eye_ar_history.append(avg_ear)
+                
+                # Simple blink logic: transition from open -> closed -> open
+                if len(self.eye_ar_history) >= 3:
+                    # If current is closed but recent history was open
+                    if avg_ear < self.eye_ar_threshold:
+                        # Check if we were open recently
+                        if max(list(self.eye_ar_history)[-5:]) > 0.3:
+                            return True
+                return False
+        except Exception as e:
+            print(f"ERROR: Blink detection failed: {e}")
+            return False
 
     def _check_head_turn(self, landmarks, direction):
-        """Check if head is turned in specific direction"""
-        nose_tip = landmarks.part(30).x
-        chin = landmarks.part(8).x
-        left_face = landmarks.part(0).x
-        right_face = landmarks.part(16).x
-        
-        face_width = right_face - left_face
-        if face_width == 0: return False
-        
-        # Ratio of nose position within face width
-        # 0.5 = center, < 0.5 = left (from viewer perspective, right for user), > 0.5 = right
-        ratio = (nose_tip - left_face) / face_width
-        
-        if direction == 'turn_left': # User turns left (viewer sees nose move right)
-            return ratio > 0.65
-        elif direction == 'turn_right': # User turns right (viewer sees nose move left)
-            return ratio < 0.35
+        """Check if head is turned in specific direction (works with 5-point model)"""
+        try:
+            num_parts = landmarks.num_parts
             
-        return False
+            if num_parts == 5:
+                # 5-point model: use nose (point 4) and eye positions
+                nose_x = landmarks.part(4).x
+                left_eye_x = (landmarks.part(0).x + landmarks.part(1).x) / 2.0
+                right_eye_x = (landmarks.part(2).x + landmarks.part(3).x) / 2.0
+                
+                face_width = right_eye_x - left_eye_x
+                if face_width == 0: return False
+                
+                # Ratio of nose position relative to eyes
+                ratio = (nose_x - left_eye_x) / face_width
+                
+                if direction == 'turn_left':
+                    return ratio > 0.65  # Nose moves right relative to eyes
+                elif direction == 'turn_right':
+                    return ratio < 0.35  # Nose moves left relative to eyes
+                    
+                return False
+            else:
+                # 68-point model: original logic
+                nose_tip = landmarks.part(30).x
+                chin = landmarks.part(8).x
+                left_face = landmarks.part(0).x
+                right_face = landmarks.part(16).x
+                
+                face_width = right_face - left_face
+                if face_width == 0: return False
+                
+                ratio = (nose_tip - left_face) / face_width
+                
+                if direction == 'turn_left':
+                    return ratio > 0.65
+                elif direction == 'turn_right':
+                    return ratio < 0.35
+                    
+                return False
+        except Exception as e:
+            print(f"ERROR: Head turn detection failed: {e}")
+            return False
         
     def _check_nod(self, landmarks):
-        """Check for nodding motion"""
-        nose_tip_y = landmarks.part(30).y
-        
-        if not self.head_positions:
+        """Check for nodding motion (works with 5-point model)"""
+        try:
+            num_parts = landmarks.num_parts
+            
+            if num_parts == 5:
+                # 5-point model: use nose (point 4) Y position
+                nose_tip_y = landmarks.part(4).y
+            else:
+                # 68-point model: use point 30
+                nose_tip_y = landmarks.part(30).y
+            
+            if not self.head_positions:
+                self.head_positions.append(nose_tip_y)
+                return False
+                
+            # Add to history
             self.head_positions.append(nose_tip_y)
+            
+            # Check variance in Y axis
+            if len(self.head_positions) >= 5:
+                y_range = max(self.head_positions) - min(self.head_positions)
+                return y_range > 15 # Threshold in pixels
+                
             return False
-            
-        # Add to history
-        self.head_positions.append(nose_tip_y)
-        
-        # Check variance in Y axis
-        if len(self.head_positions) >= 5:
-            y_range = max(self.head_positions) - min(self.head_positions)
-            return y_range > 15 # Threshold in pixels
-            
-        return False
+        except Exception as e:
+            print(f"ERROR: Nod detection failed: {e}")
+            return False
 
     def process_frame(self, frame, landmarks, face_region):
         """

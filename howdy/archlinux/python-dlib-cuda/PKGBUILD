@@ -1,0 +1,118 @@
+# Maintainer: Zen Wen <zen.8841@gmail.com>
+# Maintainer: Jingbei Li <i@jingbei.li>
+# Contributor: Lev Velykoivanenko <velykoivanenko dot lev at gmail dot com>
+# Contributor: Flávio Zavan <flavio dot zavan at gmail dot com>
+# Contributor: pingplug
+# Contributor: perlawk
+# Contributor: xsmile
+#
+# CUDA 13.x fixes:
+# - gcc13 required (CUDA 13.x incompatible with GCC 14+)
+# - CMAKE_POLICY_DEFAULT_CMP0146=OLD (cmake 4.x removed FindCUDA)
+# - sm_50 -> sm_XX (sm_50 dropped in CUDA 13.x)
+#
+# Set DLIB_CUDA_COMPUTE_CAP env var to override GPU arch (default: auto-detect or 86)
+
+_build_cpu=1
+_build_cuda=1
+
+pkgbase=python-dlib
+[[ $_build_cpu -eq 1 ]] && pkgname+=('python-dlib')
+[[ $_build_cuda -eq 1 ]] && pkgname+=('python-dlib-cuda')
+_pkgname=dlib
+pkgver=20.0
+pkgrel=3
+pkgdesc="Dlib is a general purpose cross-platform C++ library designed using contract programming and modern C++ techniques."
+arch=('x86_64')
+url="http://www.dlib.net/"
+license=('BSL-1.0')
+depends=('cblas' 'ffmpeg' 'giflib' 'lapack' 'libjpeg-turbo' 'libjxl' 'libpng' 'libx11')
+makedepends=('boost' 'cmake' 'python-setuptools' 'sqlite')
+[[ $_build_cuda -eq 1 ]] && makedepends+=('cuda' 'cudnn' 'gcc13')
+optdepends=('sqlite')
+source=("https://github.com/davisking/dlib/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('705749801c7896f5c19c253b6be639f4cef2c1831a9606955f01b600b3d86d80')
+[[ $_build_cuda -eq 1 ]] && options=(!lto)
+
+# Detect GPU compute capability
+_get_cuda_arch() {
+  if [[ -n "$DLIB_CUDA_COMPUTE_CAP" ]]; then
+    echo "$DLIB_CUDA_COMPUTE_CAP"
+  elif command -v nvidia-smi &>/dev/null; then
+    nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d '.'
+  else
+    echo "86"
+  fi
+}
+
+prepare() {
+  cd "$srcdir/"
+  if [[ $_build_cuda -eq 1 ]]; then
+    cp -a "${_pkgname}-${pkgver}" "${_pkgname}-${pkgver}-cuda"
+    
+    cd "${_pkgname}-${pkgver}-cuda"
+    
+    local cuda_arch=$(_get_cuda_arch)
+    echo "Patching for CUDA compute capability: sm_${cuda_arch}"
+    
+    # Patch 1: Update default CUDA compute capability in main CMakeLists.txt
+    sed -i "s/DLIB_USE_CUDA_COMPUTE_CAPABILITIES 50/DLIB_USE_CUDA_COMPUTE_CAPABILITIES ${cuda_arch}/g" \
+      dlib/CMakeLists.txt
+    
+    # Patch 2: Add CMAKE_POLICY_DEFAULT_CMP0146 to CUDA_TEST_CMAKE_FLAGS
+    sed -i '/set(CUDA_TEST_CMAKE_FLAGS/,/)/s|)$|  "-DCMAKE_POLICY_DEFAULT_CMP0146=OLD")|' \
+      dlib/CMakeLists.txt
+    
+    # Patch 3: Fix sm_50 in test_for_cuda (CUDA 13.x dropped sm_50)
+    sed -i "s/-arch=sm_50/-arch=sm_${cuda_arch}/g" \
+      dlib/cmake_utils/test_for_cuda/CMakeLists.txt
+    
+    # Patch 4: Fix sm_50 in test_for_cudnn
+    sed -i "s/-arch=sm_50/-arch=sm_${cuda_arch}/g" \
+      dlib/cmake_utils/test_for_cudnn/CMakeLists.txt
+  fi
+}
+
+build_python-dlib() {
+  cd "${srcdir}/${_pkgname}-${pkgver}"
+  python setup.py build --no DLIB_USE_CUDA
+}
+
+build_python-dlib-cuda() {
+  cd "${srcdir}/${_pkgname}-${pkgver}-cuda"
+  
+  local cuda_arch=$(_get_cuda_arch)
+  echo "Building with CUDA compute capability: sm_${cuda_arch}"
+  
+  export CC=/usr/bin/gcc-13
+  export CXX=/usr/bin/g++-13
+  export CUDAHOSTCXX=/usr/bin/g++-13
+  
+  python setup.py build \
+    --set DLIB_USE_CUDA=ON \
+    --set DLIB_USE_CUDA_COMPUTE_CAPABILITIES="${cuda_arch}" \
+    --set CMAKE_POLICY_DEFAULT_CMP0146=OLD \
+    --set CUDA_HOST_COMPILER=/usr/bin/gcc-13 \
+    --set CMAKE_C_COMPILER=/usr/bin/gcc-13 \
+    --set CMAKE_CXX_COMPILER=/usr/bin/g++-13 \
+    --set USE_AVX_INSTRUCTIONS=ON
+}
+
+build() {
+  if [[ $_build_cpu -eq 1 ]]; then build_python-dlib; fi
+  if [[ $_build_cuda -eq 1 ]]; then build_python-dlib-cuda; fi
+}
+
+package_python-dlib() {
+  depends+=('python')
+  cd "${srcdir}/${_pkgname}-${pkgver}"
+  python setup.py install --skip-build --prefix=/usr --root="$pkgdir" --optimize=1
+}
+
+package_python-dlib-cuda() {
+  depends+=('cuda' 'cudnn' 'python')
+  provides=('python-dlib')
+  conflicts=('python-dlib')
+  cd "${srcdir}/${_pkgname}-${pkgver}-cuda"
+  python setup.py install --skip-build --prefix=/usr --root="$pkgdir" --optimize=1
+}

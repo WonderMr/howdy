@@ -151,7 +151,29 @@ print_msg "Preliminary tests passed."
 # 5. Patching system config for compatibility
 print_msg "Checking and fixing configuration..."
 
-CONFIG_FILE="$SYSTEM_HOWDY_DIR/config.ini"
+# IMPORTANT: The canonical config location is /etc/howdy/config.ini
+# pam.py reads from $SYSTEM_HOWDY_DIR/config.ini, so we need a symlink
+CANONICAL_CONFIG="/etc/howdy/config.ini"
+LOCAL_CONFIG="$SYSTEM_HOWDY_DIR/config.ini"
+
+if [ -f "$CANONICAL_CONFIG" ]; then
+    # Canonical config exists - ensure local config is a symlink to it
+    if [ -L "$LOCAL_CONFIG" ]; then
+        print_msg "Config symlink already exists"
+    elif [ -f "$LOCAL_CONFIG" ]; then
+        print_msg "Creating symlink: $LOCAL_CONFIG -> $CANONICAL_CONFIG"
+        mv "$LOCAL_CONFIG" "$LOCAL_CONFIG.bak.$(date +%s)"
+        ln -s "$CANONICAL_CONFIG" "$LOCAL_CONFIG"
+    else
+        print_msg "Creating symlink: $LOCAL_CONFIG -> $CANONICAL_CONFIG"
+        ln -s "$CANONICAL_CONFIG" "$LOCAL_CONFIG"
+    fi
+    CONFIG_FILE="$CANONICAL_CONFIG"
+else
+    # No canonical config - use local config directly
+    print_msg "Using local config: $LOCAL_CONFIG"
+    CONFIG_FILE="$LOCAL_CONFIG"
+fi
 
 # Add missing options in [core] for compatibility
 print_msg "Adding missing options to [core]..."
@@ -226,6 +248,27 @@ cp -f "$SRC_DIR/compare.py" "$SYSTEM_HOWDY_DIR/"
 cp -f "$SRC_DIR/cli.py" "$SYSTEM_HOWDY_DIR/"
 # Copy CLI subcommands
 cp -rf "$SRC_DIR/cli" "$SYSTEM_HOWDY_DIR/"
+# Copy recorders (video_capture.py with USB wake fix)
+cp -rf "$SRC_DIR/recorders" "$SYSTEM_HOWDY_DIR/"
+# Copy PAM toggle script and wrapper
+if [ -f "$SRC_DIR/pam_toggle.py" ]; then
+    cp -f "$SRC_DIR/pam_toggle.py" "$SYSTEM_HOWDY_DIR/"
+    chmod 755 "$SYSTEM_HOWDY_DIR/pam_toggle.py"
+    print_msg "PAM toggle script installed"
+fi
+
+if [ -f "$SRC_DIR/pam_toggle_wrapper.c" ]; then
+    # Compile C wrapper for better pkexec compatibility
+    print_msg "Compiling PAM toggle wrapper..."
+    gcc "$SRC_DIR/pam_toggle_wrapper.c" -o "/usr/bin/howdy-pam-toggle"
+    chmod 755 "/usr/bin/howdy-pam-toggle"
+    print_msg "PAM toggle binary wrapper installed to /usr/bin/howdy-pam-toggle"
+elif [ -f "$SRC_DIR/pam-toggle-wrapper.sh" ]; then
+    # Fallback to bash wrapper
+    cp -f "$SRC_DIR/pam-toggle-wrapper.sh" "/usr/bin/howdy-pam-toggle"
+    chmod 755 "/usr/bin/howdy-pam-toggle"
+    print_msg "PAM toggle bash wrapper installed to /usr/bin/howdy-pam-toggle"
+fi
 
 # Set permissions RECURSIVELY
 print_msg "Setting permissions..."
@@ -233,11 +276,13 @@ print_msg "Setting permissions..."
 find "$SYSTEM_HOWDY_DIR" -type d -exec chmod 755 {} \;
 find "$SYSTEM_HOWDY_DIR" -type f -name "*.py" -exec chmod 644 {} \;
 
-# CRITICAL: cli.py must be executable
+# CRITICAL: cli.py, pam_toggle.py and wrapper must be executable
 chmod 755 "$SYSTEM_HOWDY_DIR/cli.py" 2>/dev/null || true
+chmod 755 "$SYSTEM_HOWDY_DIR/pam_toggle.py" 2>/dev/null || true
+# Wrapper is now in /usr/bin, chmod handled during install
 
-# Set permissions for other files
-find "$SYSTEM_HOWDY_DIR" -type f ! -name "*.py" ! -name "*.dat" -exec chmod 644 {} \;
+# Set permissions for other files (exclude .sh scripts)
+find "$SYSTEM_HOWDY_DIR" -type f ! -name "*.py" ! -name "*.dat" ! -name "*.sh" -exec chmod 644 {} \;
 
 chown -R root:root "$SYSTEM_HOWDY_DIR"
 
@@ -248,6 +293,24 @@ find "$SYSTEM_HOWDY_DIR/dlib-data" -type f -name "*.dat" -exec chmod 644 {} \; 2
 find "$SYSTEM_HOWDY_DIR/models" -type f -name "*.dat" -exec chmod 644 {} \; 2>/dev/null || true
 
 print_msg "Files copied, permissions set."
+
+# 6.4 Install polkit policy for pam_toggle.py
+print_msg "Installing polkit policy..."
+if [ -f "$REPO_ROOT/howdy/polkit/org.freedesktop.policykit.pkexec.run-howdy-pam-toggle.policy" ]; then
+    cp -f "$REPO_ROOT/howdy/polkit/org.freedesktop.policykit.pkexec.run-howdy-pam-toggle.policy" \
+        /usr/share/polkit-1/actions/
+    chmod 644 /usr/share/polkit-1/actions/org.freedesktop.policykit.pkexec.run-howdy-pam-toggle.policy
+    print_msg "✓ Polkit policy installed"
+else
+    print_warn "Polkit policy file not found, skipping"
+fi
+
+if [ -f "$REPO_ROOT/howdy/polkit/50-howdy-pam-toggle.rules" ]; then
+    cp -f "$REPO_ROOT/howdy/polkit/50-howdy-pam-toggle.rules" \
+        /etc/polkit-1/rules.d/
+    chmod 644 /etc/polkit-1/rules.d/50-howdy-pam-toggle.rules
+    print_msg "✓ Polkit rules installed"
+fi
 
 # 6.5 Deploy GTK Interface
 print_msg "Deploying GTK interface to $SYSTEM_GTK_DIR..."
@@ -313,6 +376,35 @@ print_msg "System installation is operational."
 
 trap - ERR
 cleanup
+
+# Restart howdy-gtk to load new version
+print_msg "Restarting howdy-gtk..."
+
+# Kill all howdy-gtk processes (running as user)
+# Process names are "python3 init.py --minimized" or "python3 init.py --start-auth-ui"
+if [ -n "$SUDO_USER" ]; then
+    pkill -u "$SUDO_USER" -f "init.py --minimized" 2>/dev/null || true
+    pkill -u "$SUDO_USER" -f "init.py --start-auth-ui" 2>/dev/null || true
+    pkill -u "$SUDO_USER" -f "howdy-gtk" 2>/dev/null || true
+else
+    pkill -f "init.py --minimized" 2>/dev/null || true
+    pkill -f "init.py --start-auth-ui" 2>/dev/null || true
+fi
+
+sleep 1
+
+# Check if any howdy-gtk still running
+remaining=$(pgrep -c -f "init.py --(minimized|start-auth-ui)" 2>/dev/null || echo "0")
+if [ "$remaining" -gt 0 ]; then
+    print_warn "$remaining howdy-gtk process(es) still running"
+    print_warn "Kill them manually: pkill -f 'init.py --'"
+fi
+
+# Check if user wants to auto-start
+if pgrep -u "$SUDO_USER" -x "plasmashell\|gnome-shell\|xfce4-panel" > /dev/null 2>&1; then
+    print_msg "Desktop environment detected, you can start howdy-gtk manually:"
+    print_msg "  howdy-gtk --minimized &"
+fi
 
 print_msg "=========================================="
 print_msg "Deployment successfully completed!"
